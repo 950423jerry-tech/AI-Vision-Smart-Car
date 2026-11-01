@@ -1,188 +1,114 @@
-# AMB82-Mini + Google AI Edge Gallery Smart Giraffe
+AI 視覺辨識智慧車模擬清掃八週計畫書
+開發期間： 8 週，自專案啟動日起計算
+團隊規模： 3 人
+開發平台： 教師提供的電腦與 AMB82-Mini 及攝影機
+材料預算： 新臺幣 3,000 元以內
+專案狀態： 提案階段，功能與數據皆待實作驗證
 
-## Project proposal
+一 專題摘要與目標
+本專題製作 AI 視覺辨識智慧車，用實體車驗證未來掃地機器人所需的垃圾辨識、對準、靠近及避障流程。本期以八週完成「電腦模擬 → 板上驗證 → 實體車模擬清掃」，清掃動作以 LED 燈號或介面狀態表示，不安裝吸塵風機、吸嘴與集塵盒。
 
-The recommended architecture is to make the **AMB82-Mini the giraffe's embodied hardware controller**, while **Google AI Edge Gallery on an Android device provides the higher-level agent/reasoning layer**. Rather than putting a full MCP implementation and a large language model on the microcontroller, the AMB82 exposes a small semantic JSON/HTTP API for perception and physical actions.
+期末展示為車輛找到單一類型紙屑，低速靠近並停在預定位置，顯示「模擬清掃完成」，接著停止等待下一次試驗。紙屑仍留在地面，不宣稱實際清潔成功。測試限定於無階差的室內平坦硬質地板與受控光線。
 
-```text
-                   SMART GIRAFFE
- ┌────────────────────────────────────────────┐
- │                AMB82-Mini                  │
- │                                            │
- │ Camera ──> local vision ──> perception     │
- │ Mic ─────> audio/event detection           │
- │                                            │
- │              Giraffe Agent API             │
- │        HTTP/WebSocket JSON interface       │
- │                    │                       │
- │       ┌────────────┼────────────┐          │
- │       ▼            ▼            ▼          │
- │    Speaker       Servos        LEDs         │
- │   / playback   head / ears   expression     │
- └────────────────────┬───────────────────────┘
-                      │ Wi-Fi
-                      │
-              Android phone/tablet
- ┌────────────────────▼───────────────────────┐
- │          Google AI Edge Gallery            │
- │                                            │
- │        on-device model / agent             │
- │                 │                          │
- │         Giraffe Agent Skill                │
- │                 │                          │
- │        JS Skill / MCP ecosystem            │
- │                 │                          │
- │       ┌─────────┼─────────┐                │
- │       ▼         ▼         ▼                │
- │     look()    emotion()   move()            │
- │     status()  play()      etc.              │
- └────────────────────────────────────────────┘
-```
+本計畫將車子理解為可控制馬達、安裝攝影機與感測器的實體教學車。第一週確認老師是否提供現成車、控制介面及供電規格；若無現成車，使用簡易雙輪底盤。教師電腦用於前期模擬與模型開發，AMB82-Mini 作為預定板上辨識及控制平台，實際接線與模型相容性均須驗證。
 
-## Why use a small hardware API?
+二 八週版本的功能範圍
+分類	規劃內容
+必須完成	二維移動與避障模擬、單一紙屑辨識、板上推論測試、雙輪移動、距離感測停車、定點模擬清掃及測試紀錄
+基本操作	提供啟動、停止及狀態查詢；手機簡易介面透過 Wi-Fi 傳送受限高階指令
+課程整合目標	第一週確認 Google AI Edge Gallery 與原提案指定 Gemma 4 E2B 的版本及相容性；第二週完成串接可行性試驗，第七週嘗試整合
+延伸項目	未來整合吸塵機構與掃地機器人、多種垃圾及直接語音操作
+不納入本期	吸塵與集塵機構、實際垃圾清除、全屋地圖、SLAM、自動回充及完整三維物理模擬
+若課程要求必須展示指定 Agent，第二週即向教師確認可接受的備案；簡易手機控制只能作為可獨立運作的基礎介面，不視為已完成 Agent 要求。指定模型與 App 的可用性尚未在本計畫中實測。
 
-MCP is most useful at the agent/tool integration layer. The AMB82 should remain responsible for deterministic embedded functions: camera inference, GPIO/PWM, audio playback, LEDs, sensor events, and motion safety. A compact HTTP/JSON API is easier to debug, uses less RAM/flash, and prevents the language model from directly commanding low-level PWM or GPIO values.
+三 系統架構與模擬轉移方法
+電腦端先建立簡單二維場景，顯示車體、紙屑、障礙物與模擬距離感測範圍。控制邏輯統一使用「搜尋、對準、靠近、清掃、確認、避障、停止」等狀態；緊急停止與近距離限制具有最高優先權。
 
-The agent should therefore request semantic actions such as:
+介面	電腦模擬階段	實際硬體階段
+目標輸入	模擬目標在車體視野中的方向與可見性	攝影機辨識類別、信心值與目標框
+安全輸入	由場景計算的模擬障礙距離	真實距離感測器讀值與有效性
+移動輸出	更新虛擬車的位置與方向	經馬達驅動器控制左右輪
+清掃輸出	顯示清掃狀態與模擬成功條件	停止車輪，以 LED 或介面顯示模擬清掃狀態
+狀態回報	畫面與事件紀錄	序列埠或 Wi-Fi 回報
+模擬車僅能使用模擬感測範圍內的資訊作決策，不直接讀取場景中所有垃圾的位置。模擬與實機沿用相同狀態定義與決策規則；若電腦與板子使用不同語言，依相同介面移植並逐項比對，不假設程式可以原封不動移植。
 
-```text
-giraffe.look()
-giraffe.nod()
-giraffe.shake_head()
-giraffe.wave()
-giraffe.set_emotion("happy")
-giraffe.play_sound("hello")
-giraffe.status()
-```
+真實照片或固定攝影機的辨識測試，用於驗證左右偏差及動作判斷；虛擬車移動不會改變真實攝影機視野，因此不將此測試宣稱為完整視覺閉迴路模擬。完整的移動與視野回饋於裝車後確認。模擬亦不能取代打滑、電源與鏡頭盲區的實測。
 
-Do **not** expose low-level commands such as arbitrary servo angles, raw PWM duty cycles, or unrestricted GPIO writes to the agent.
+四 八週工作日程與每週驗收
+週次	工作內容	當週驗收成果
+第 1 週	確認教學車、板子、電腦與供電規格；跑通攝影機範例，建立簡單二維場景；確認模型部署與課程 Agent 條件	設備與介面表、攝影機畫面、虛擬車移動展示
+第 2 週	在電腦模擬搜尋、對準、靠近、避障、停止及模擬清掃；同步蒐集紙屑照片，試驗 Agent 串接	至少 5 種場景的狀態紀錄，涵蓋無目標、左右目標、障礙及停止
+第 3 週	訓練及測試單一紙屑模型；進行最小模型轉換與板上載入測試	未參與訓練的影像測試結果、誤判案例與板上載入紀錄
+第 4 週	板子固定桌面進行辨識與決策；以文字或燈號代替車輪動作；測試感測器及 Wi-Fi 啟停介面	展示左轉、右轉、前進、停止判斷；記錄推論延遲與異常停止
+第 5 週	在教學車上安裝板子與感測器；先架空測試馬達方向及供電，再低速落地測試	手動啟停與基本避障成功，馬達運轉時無觀察到的板子重啟
+第 6 週	接通視覺與車輛控制；校正紙屑接近位置，停車後亮燈或顯示模擬清掃完成	完成一次找到紙屑、對準、靠近、停車及模擬清掃的完整流程
+第 7 週	重複測試及修正；整合手機高階命令與課程 Agent，凍結新增功能	測試初表、操作展示、Agent 實際完成程度與失敗原因紀錄
+第 8 週	正式驗收、整理數據與影片、完成簡報；保留除錯與展示排練時間	智慧車原型、程式與模型、模擬清掃影片、測試報告
+資料蒐集與硬體規格確認可並行。落地測試須在架空與供電檢查通過後進行；本期不追加吸塵機構。第七與第八週優先用於穩定性及重複測試。
 
-## Two-level AI design
+五 辨識與車上模擬清掃方法
+鏡頭安裝於車體前方並向地面傾斜，利用目標框中心相對於畫面中心的偏差決定轉向。模型須使用自蒐集的指定紙屑資料訓練與驗證，不假設官方預設類別包含紙屑。
 
-```text
-       Fast / reactive                    Cognitive
-       AMB82-Mini                         Android device
+訓練與測試資料按不同拍攝批次或場景分開，避免將同一影片相鄰畫格分到兩邊而高估辨識效果。保留無垃圾、地板紋路及陰影等負樣本，記錄漏判與誤判。
 
-       local object detection             reasoning
-       gesture/event detection            conversation
-       camera capture                     agent skills
-       LEDs / audio / servos              MCP integrations
-       safety interlocks                  planning
-```
+距離感測器主要負責障礙物安全檢查，未必能可靠量到貼地紙屑。靠近紙屑時，以平坦地面上的影像位置校正、低速分段移動及實測停止位置決定停車位置；不得將障礙物距離直接當作紙屑距離。目標失去追蹤時先停車或重新搜尋，不持續盲目前進。
 
-The AMB82 can turn continuous sensor streams into compact events. For example:
+車輛到達校正的目標區域後，先停止車輪，再亮燈或顯示模擬清掃狀態約 2 秒，最後進入完成並等待重置。狀態名稱使用 CLEAN_SIM，畫面明確標示「模擬清掃」，避免與實際吸取混淆。每次試驗結束由人員重置車輛及紙屑，避免同一紙屑反覆觸發。
 
-```json
-{
-  "event": "object_detected",
-  "objects": [
-    {"class": "person", "confidence": 0.96},
-    {"class": "book", "confidence": 0.88}
-  ]
-}
-```
+手機與 Agent 僅下達啟動、停止及查詢等高階命令；即時安全判斷由板子執行。目標消失、無效感測資料或控制通訊超時時，採保守停止策略。
 
-This event-driven approach avoids continuously sending camera frames to the phone.
+六 硬體與預算
+以下沿用原提案估算，並非實際報價；以教師提供板子及攝影機、已有電腦與 Android 手機為前提。
 
-## Recommended first six tools
+項目	預估金額 NT$
+AMB82-Mini 與攝影機	0
+雙輪底盤與減速馬達	500
+雙通道馬達驅動器	150
+距離感測器	180
+電池、保護、充電與穩壓電路	650
+LED 指示與限流元件	50
+固定件與車架材料	200
+線材與其他耗材	200
+預備金	300
+總計	2,230
+上述金額沿用原提案相關項目並刪除吸塵零件，LED 為新增估算，未經報價確認。若老師提供現成車，先扣除可沿用的底盤、馬達與驅動器費用；運費及替換材料仍須納入 3,000 元上限。採購前核對馬達電流、供電與介面電位，不直接以 GPIO 供電給馬達。
 
-| Tool | AMB82 role | Agent purpose |
-|---|---|---|
-| `look()` | Camera + local detector | Understand surroundings |
-| `nod()` | Servo animation | Positive physical response |
-| `shake()` | Servo animation | Negative physical response |
-| `emotion()` | LED + bounded motion | Express state |
-| `play()` | microSD/audio playback | Sounds or prerecorded speech |
-| `status()` | Device telemetry | Check device state |
+七 組員、分工與進度管理
+組員名單
+班級	學號	姓名
+電機3A	01353016	陳畇辰
+電機3A	01353023	劉倢睿
+電機3A	01353040	邱瀚祺
+工作分工（建議）
+三人團隊預計分為以下工作角色，實際對應組員由組內討論確認：
 
-## Example interaction
+角色	建議負責工作
+A	影像資料蒐集、模型訓練與 AMB82-Mini 板上影像辨識
+B	電源、馬達、距離感測器與車體安裝及安全測試
+C	2D 模擬、狀態機、通訊、整合測試與文件整理
+進度管理
+每週固定保留一次整合與展示時段，紀錄完成項目、問題、下週通過條件。第一週確認成員可投入工時；八週排程以縮小場景及並行分工為前提，不保證在任何投入程度下都能完成全部功能。
 
-```text
-User: "What am I holding?"
+八 驗收指標與紀錄
+所有數值均為預定目標，並非已達成成果。正式測試前固定紙屑尺寸、地板、光線條件、初始位置及單次測試超時，記錄電池狀態與失敗原因。
 
-Agent -> look()
-AMB82 -> {"objects":[{"label":"book","confidence":0.88}]}
-Agent -> formulates an answer
-Agent -> emotion("happy")
-Agent -> nod()
-Phone/TTS or toy audio -> "It looks like a book."
-```
+測試項目	測試與計算方式	預定目標
+模擬控制	5 類指定場景，檢查狀態轉移及停止條件	全部符合預期，提供事件紀錄
+垃圾辨識	至少 20 次獨立目標呈現；正確偵測次數除以總次數；另測無垃圾場景並記錄誤報	正確偵測比例至少 80%
+避障	20 次障礙接近試驗，統計無碰撞停止或轉向	至少 18 次成功；其餘案例分析原因
+對準與模擬清掃	20 次試驗，車體不接觸紙屑，停在預先標定的目標區域，且停車後正確顯示 CLEAN_SIM	至少 14 次成功
+停止與異常	各測啟停、通訊中斷、目標消失與無效感測資料，紀錄反應時間	能進入預定保守停止狀態
+整合展示	受控場地包含一處障礙及一處指定紙屑	完成辨識、避障或靠近、停車及模擬清掃回報
+避障成功比例是效能評估，不代表允許展示時碰撞；曾出現碰撞須找出原因並修正後再展示。
 
-## Firmware/API design
+九 關鍵風險與縮減方案
+模型部署不相容： 第一週確認流程，第三週完成最小部署試驗。若失敗，優先改用板子支援的模型架構並縮小類別，不將問題延至裝車時處理。
+紙屑辨識不足： 固定單一紙屑外觀、尺寸與受控地板，補充失敗樣本；如實標示適用範圍。
+接近位置不準： 第六週校正鏡頭位置與停車區域，降低車速並分段移動。驗收前固定車體參考點與停車區域尺寸，記錄超出區域的失敗案例。
+整合進度落後： 優先完成單一目標流程，暫停多類別與直接語音功能；課程必備 Agent 的變更須先與教師確認。
+Agent 無法串接： 第二週確認可行性，保留獨立 HTTP 控制與狀態展示，說明 Agent 未完成部分，不以手動操作冒充語意控制。
+硬體或供電異常： 保持桌上與架空測試，異常未排除前不進入落地測試。測試區不設樓梯或階差，避開液體與鬆散線材。
+十 預期成果
+期末交付二維模擬程式、紙屑影像與標註資料、模型及部署紀錄、AMB82-Mini 控制程式、實體智慧車、手機操作介面、驗收數據及展示影片。報告清楚區分模擬成功、板上驗證及車上模擬清掃成果，並列出課程 Agent 的實際完成程度。
 
-The reference firmware in `GiraffeAgent.ino` exposes endpoints such as:
-
-```text
-GET /status
-GET /look
-GET /nod
-GET /shake
-GET /wave
-GET /emotion/happy
-GET /emotion/curious
-GET /emotion/thinking
-GET /emotion/sleepy
-GET /play/hello
-```
-
-The supplied implementation intentionally contains adapter functions for camera inference, servo control, LEDs, and audio. Replace those adapters with the APIs appropriate to the exact AMB82-Mini board package and peripherals used in the build.
-
-## AI Edge Gallery Skill
-
-The reference `SKILL.md` gives the model a deliberately small physical-action vocabulary. `scripts/index.html` acts as the bridge between the Skill and the AMB82 HTTP API.
-
-The bridge validates actions before sending them to the toy. This is an important design property: model output is never translated into unrestricted hardware access.
-
-## Version 2: events
-
-After command/control is stable, add an event channel, for example:
-
-```text
-ws://giraffe.local/events
-```
-
-Possible events:
-
-```json
-{"event":"person_detected"}
-{"event":"wave_detected"}
-{"event":"button_pressed"}
-{"event":"picked_up"}
-{"event":"object_detected","object":"book"}
-```
-
-This allows the physical toy to initiate interactions without constant polling.
-
-## Safety and privacy
-
-- Enforce servo travel, speed, and timeout limits in firmware, not in prompts.
-- Never expose arbitrary GPIO/PWM control to the language model.
-- Keep moving linkages, batteries, and rigid parts inaccessible through the plush exterior.
-- Use visible indicators for camera/microphone/network activity.
-- Avoid continuous audio/video upload; perform local event detection where practical.
-- Do not store images/audio by default.
-- Provide a physical power switch and preferably hardware camera/microphone disable controls.
-- Validate power supply current and peripheral voltage compatibility before assembly.
-- Treat a modified plush as an engineering prototype unless it has undergone applicable toy/product safety testing.
-
-## Suggested implementation order
-
-1. Bring up Wi-Fi and `/status`.
-2. Implement bounded LED expressions.
-3. Implement one servo and `/nod` with hard travel limits.
-4. Add camera capture/local detection and `/look`.
-5. Add microSD/audio playback and `/play`.
-6. Install the AI Edge Gallery Skill and test the JavaScript bridge.
-7. Add event-driven perception only after command/control is reliable.
-8. Add richer STT/TTS/MCP integrations at the Android agent layer.
-
-## Repository layout
-
-```text
-giraffe-agent/
-├── PROPOSAL.md
-├── GiraffeAgent.ino
-├── SKILL.md
-└── scripts/
-    └── index.html
-```
+核心里程碑為第二週完成電腦模擬、第四週完成板上判斷、第五週完成車輛控制、第六週完成車上模擬清掃、第八週完成驗收。本期驗證的是感知與移動決策，實際清潔能力尚未驗證。後續有足夠時間時，再另外規劃吸塵、集塵與掃地機器人整合。
